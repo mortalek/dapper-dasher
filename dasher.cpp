@@ -34,6 +34,13 @@ enum class GameState
     Win
 };
 
+struct ParallaxLayer
+{
+    Texture2D texture;
+    float x;
+    float speed;
+    float scale;
+};
 struct Game 
 {
     GameState state;
@@ -44,9 +51,33 @@ struct Game
     Scarfy scarfy;
     NebulaSystem nebulae;
 
+    ParallaxLayer background;
+    ParallaxLayer midGround;
+    ParallaxLayer foreground;
+
     bool collision;
     float finishLine;
 };
+
+AnimData updateAnimData(AnimData data, float deltaTime, int maxFrame)
+{
+    // update running time
+    data.runningTime += deltaTime;
+
+    if (data.runningTime >= data.updateTime)
+    {
+        data.runningTime = 0.0;
+        // update animation frame
+        data.rec.x = data.frame * data.rec.width;
+        data.frame++;
+        if (data.frame > maxFrame)
+        {
+            data.frame = 0;
+        }
+    }
+
+    return data;
+}
 
 void InitNebulaSystem(NebulaSystem& nebula, Game& game)
 {
@@ -81,13 +112,54 @@ void DrawNebulae(const Game& game)
     }
 }
 
-void UpdateNebulaePos(Game& game, float dt)
+void UpdateNebulaePos(NebulaSystem& nebulae, float dt)
 {
-    for (int i = 0; i < game.nebulae.count; ++i)
+    for (int i = 0; i < nebulae.count; ++i)
     {
-        game.nebulae.items[i].pos.x += game.nebulae.velocity * dt;
+        nebulae.items[i].pos.x += nebulae.velocity * dt;
     }
 }
+
+void UpdateNebulaAnimations(NebulaSystem& nebulae, float dt)
+{
+    for (int i = 0; i < nebulae.count; ++i)
+    {
+        nebulae.items[i] = updateAnimData(nebulae.items[i], dt, 7);
+    }
+}
+
+void CheckNebulaCollisions(Game& game)
+{
+    const float pad = 50.0f;
+
+    Rectangle scarfyRec{
+        game.scarfy.data.pos.x,
+        game.scarfy.data.pos.y,
+        game.scarfy.data.rec.width,
+        game.scarfy.data.rec.height
+    };
+
+    for (int i = 0; i < game.nebulae.count; ++i)
+    {
+        AnimData& nebula = game.nebulae.items[i];
+
+        Rectangle nebRec{
+            nebula.pos.x + pad,
+            nebula.pos.y + pad,
+            nebula.rec.width - 2 * pad,
+            nebula.rec.height - 2 * pad
+        };
+
+        if (CheckCollisionRecs(nebRec, scarfyRec))
+        {
+            game.collision = true;
+            game.state = GameState::GameOver;
+            return;
+        }
+    }
+}
+
+
 
 Scarfy CreateScarfy(const Game& game)
 {
@@ -116,26 +188,6 @@ bool isOnGround(AnimData data, int windowHeight)
     return data.pos.y >= windowHeight - data.rec.height;
 }
 
-AnimData updateAnimData(AnimData data, float deltaTime, int maxFrame)
-{
-    // update running time
-    data.runningTime += deltaTime;
-
-    if (data.runningTime >= data.updateTime)
-    {
-        data.runningTime = 0.0;
-        // update animation frame
-        data.rec.x = data.frame * data.rec.width;
-        data.frame++;
-        if (data.frame > maxFrame)
-        {
-            data.frame = 0;
-        }
-    }
-
-    return data;
-}
-
 void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
 {
     // perform ground check
@@ -148,7 +200,7 @@ void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
     else 
     {
         // rectangle is in the air
-        scarfy.velocity += 1'000 * dt; //gravity
+        scarfy.velocity += 1'000 * dt; //gravity (pixels/s/s)
         scarfy.isInAir = true;
     }
     // jump check
@@ -173,6 +225,28 @@ Game InitGame()
 
     game.state = GameState::Playing;
     game.collision = false;
+
+    game.background = {
+        LoadTexture("textures/far-buildings.png"),
+        0.0f,
+        20.0f,
+        2.0f
+    };
+
+    game.midGround = {
+        LoadTexture("textures/back-buildings.png"),
+        0.0f,
+        40.0f,
+        2.0f
+    };
+
+    game.foreground = {
+        LoadTexture("textures/foreground.png"),
+        0.0f,
+        80.0f,
+        2.0f
+    };
+
     game.scarfy = CreateScarfy(game);
     InitNebulaSystem(game.nebulae, game);
 
@@ -197,29 +271,32 @@ void InitScarfy(AnimData& scarfy, int windowWidth, int windowHeight, Texture2D s
     scarfy.updateTime  = 1.0f / 12.0f;
 }
 
+void UpdateAndDrawLayer(Texture2D texture, float& x, float speed, float dt, float scale = 2.0f)
+{
+    x -= speed * dt;
+
+    if (x <= -texture.width * scale)
+    {
+        x = 0.0f;
+    }
+
+    Vector2 pos1{ x, 0.0f };
+    Vector2 pos2{ x + texture.width * scale, 0.0f };
+
+    DrawTextureEx(texture, pos1, 0.0f, scale, WHITE);
+    DrawTextureEx(texture, pos2, 0.0f, scale, WHITE);
+}
+
+
 int main()
 
 {
-     int windowDimensions[2];
+    int windowDimensions[2];
     windowDimensions[0] = 512;
     windowDimensions[1] = 380;
 
     InitWindow(windowDimensions[0], windowDimensions[1], "Dapper Dasher!");
     Game game = InitGame();
-
-    // acceleration due to gravity(pixels/s/s);
-    const int gravity{1'000};
- 
-    Texture2D background = LoadTexture("textures/far-buildings.png");
-    float bgX{};
-
-    Texture2D midGround = LoadTexture("textures/back-buildings.png");
-    float mgX{};
-
-    Texture2D foreground = LoadTexture("textures/foreground.png");
-    float fgX{};
-
-    bool collision{};
 
     SetTargetFPS(60);
     while (!WindowShouldClose()) {
@@ -230,73 +307,42 @@ int main()
         BeginDrawing();
         ClearBackground(WHITE);
 
-        bgX -= 20 * dT;
-        if (bgX <= -background.width*2)
-        {
-            bgX = 0.0;
-        }
-        // scroll the midground
-        mgX -= 40 * dT;
-        if (mgX <= -midGround.width*2)
-        {
-            mgX = 0.0;
-        }
-        fgX -= 80 * dT;
-        if (fgX <= -foreground.width*2)
-        {
-            fgX = 0.0;
-        }
-        // draw the background
-        Vector2 bg1Pos{bgX, 0.0};
-        DrawTextureEx(background, bg1Pos, 0.0, 2.0, WHITE); 
-        Vector2 bg2Pos{bgX + background.width*2, 0.0};
-        DrawTextureEx(background, bg2Pos, 0.0, 2.0, WHITE);
+        UpdateAndDrawLayer(
+            game.background.texture,
+            game.background.x,
+            game.background.speed,
+            dT,
+            game.background.scale
+        );
 
-        // draw the midground
-        Vector2 mg1Pos{mgX, 0.0};
-        DrawTextureEx(midGround, mg1Pos, 0.0, 2.0, WHITE);
-        Vector2 mg2Pos{mgX + midGround.width*2, 0.0};
-        DrawTextureEx(midGround, mg2Pos, 0.0, 2.0, WHITE);
+        UpdateAndDrawLayer(
+            game.midGround.texture,
+            game.midGround.x,
+            game.midGround.speed,
+            dT,
+            game.midGround.scale
+        );
 
-        //  draw the foreground
-        Vector2 fg1Pos{fgX, 0.0};
-        DrawTextureEx(foreground, fg1Pos, 0.0, 2.0, WHITE);
-        Vector2 fg2Pos{fgX + foreground.width*2, 0.0};
-        DrawTextureEx(foreground, fg2Pos, 0.0, 2.0, WHITE);
+        UpdateAndDrawLayer(
+            game.foreground.texture,
+            game.foreground.x,
+            game.foreground.speed,
+            dT,
+            game.foreground.scale
+        );
         
         UpdateScarfy(game.scarfy, game.windowHeight, dT);
          // update nebula position 
-        UpdateNebulaePos(game, dT);
+        UpdateNebulaePos(game.nebulae, dT);
 
         game.finishLine += game.nebulae.velocity * dT;
 
         // update nebula animation frame 
-        for ( int i = 0; i < game.nebulae.count; i++)
-        {
-            game.nebulae.items[i] = updateAnimData(game.nebulae.items[i], dT, 7);
-        }
-        for (AnimData nebula : game.nebulae.items)
-        {
-            float pad{50};
-            Rectangle nebRec{
-                nebula.pos.x + pad,
-                nebula.pos.y + pad,
-                nebula.rec.width - 2*pad,
-                nebula.rec.height - 2*pad
-            };
-            Rectangle scarfyRec{
-                game.scarfy.data.pos.x,
-                game.scarfy.data.pos.y,
-                game.scarfy.data.rec.width,
-                game.scarfy.data.rec.height
-            };
-            if (CheckCollisionRecs(nebRec, scarfyRec))
-            {
-                collision = true;
-            }
-        }
+        UpdateNebulaAnimations(game.nebulae, dT);
 
-        if (collision)
+        CheckNebulaCollisions(game);
+
+        if (game.collision)
         {
             DrawText("Game Over!", windowDimensions[0]/4, windowDimensions[1]/2, 40, RED);
         }
@@ -319,9 +365,9 @@ int main()
     }
     UnloadTexture(game.scarfy.texture);
     UnloadTexture(game.nebulae.texture);
-    UnloadTexture(background);
-    UnloadTexture(midGround);
-    UnloadTexture(foreground);
+    UnloadTexture(game.background.texture);
+    UnloadTexture(game.midGround.texture);
+    UnloadTexture(game.foreground.texture);
 
     CloseWindow();
 }
