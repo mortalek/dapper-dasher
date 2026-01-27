@@ -56,7 +56,6 @@ struct Game
     ParallaxLayer foreground;
 
     bool collision;
-    float finishLine;
 };
 
 AnimData updateAnimData(AnimData data, float deltaTime, int maxFrame)
@@ -250,8 +249,6 @@ Game InitGame()
     game.scarfy = CreateScarfy(game);
     InitNebulaSystem(game.nebulae, game);
 
-    game.finishLine = game.nebulae.items[game.nebulae.count - 1].pos.x;
-
     return game;
 }
 
@@ -285,6 +282,12 @@ void UpdateAndDrawLayer(Texture2D texture, float& x, float speed, float dt, floa
 
     DrawTextureEx(texture, pos1, 0.0f, scale, WHITE);
     DrawTextureEx(texture, pos2, 0.0f, scale, WHITE);
+}
+
+float GetFinishLineX(const NebulaSystem& nebulae)
+{
+    const AnimData& last = nebulae.items[nebulae.count - 1];
+    return last.pos.x + last.rec.width;
 }
 
 
@@ -335,8 +338,6 @@ int main()
          // update nebula position 
         UpdateNebulaePos(game.nebulae, dT);
 
-        game.finishLine += game.nebulae.velocity * dT;
-
         // update nebula animation frame 
         UpdateNebulaAnimations(game.nebulae, dT);
 
@@ -346,7 +347,7 @@ int main()
         {
             DrawText("Game Over!", windowDimensions[0]/4, windowDimensions[1]/2, 40, RED);
         }
-        else if (game.scarfy.data.pos.x >= game.finishLine)
+        else if (game.scarfy.data.pos.x >= GetFinishLineX(game.nebulae))
         {
             DrawText("You Win!", windowDimensions[0]/4, windowDimensions[1]/2, 40, GREEN);
         }
