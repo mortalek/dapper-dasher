@@ -56,6 +56,9 @@ struct Game
     ParallaxLayer midGround;
     ParallaxLayer foreground;
 
+    Music menuMusic;
+    Music gameMusic;
+
     bool collision;
 };
 
@@ -128,6 +131,29 @@ void UpdateNebulaAnimations(NebulaSystem& nebulae, float dt)
     }
 }
 
+void OnGameStateChanged(Game& game, GameState newState)
+{
+    if (game.state == newState) return;
+
+    StopMusicStream(game.menuMusic);
+    StopMusicStream(game.gameMusic);
+
+    game.state = newState;
+
+    switch (newState)
+    {
+        case GameState::Menu:
+        case GameState::GameOver:
+        case GameState::Win:
+            PlayMusicStream(game.menuMusic);
+            break;
+
+        case GameState::Playing:
+            PlayMusicStream(game.gameMusic);
+            break;
+    }
+}
+
 void CheckNebulaCollisions(Game& game)
 {
     const float pad = 50.0f;
@@ -153,7 +179,8 @@ void CheckNebulaCollisions(Game& game)
         if (CheckCollisionRecs(nebRec, scarfyRec))
         {
             game.collision = true;
-            game.state = GameState::GameOver;
+            OnGameStateChanged(game, GameState::GameOver);
+
             return;
         }
     }
@@ -219,13 +246,15 @@ void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
 
 Game InitGame()
 {
-    Game game;
+    Game game{};
+
     game.windowWidth  = 512;
     game.windowHeight = 380;
 
-    game.state = GameState::Playing;
+    game.state = GameState::Menu;
     game.collision = false;
 
+    // Parallax layers (loaded once)
     game.background = {
         LoadTexture("textures/far-buildings.png"),
         0.0f,
@@ -247,10 +276,21 @@ Game InitGame()
         2.0f
     };
 
-    game.scarfy = CreateScarfy(game);
-    InitNebulaSystem(game.nebulae, game);
+    game.menuMusic = LoadMusicStream("audio/where_it_leads.mp3");
+    game.gameMusic = LoadMusicStream("audio/escape_velocity.mp3");
+
+    game.menuMusic.looping = true;
+    game.gameMusic.looping = true;
+    PlayMusicStream(game.menuMusic);
 
     return game;
+}
+
+void StartGame(Game& game)
+{
+    game.collision = false;
+    game.scarfy = CreateScarfy(game);
+    InitNebulaSystem(game.nebulae, game);
 }
 
 void UpdateParallax(ParallaxLayer& layer, float dt)
@@ -311,26 +351,24 @@ float GetFinishLineX(const NebulaSystem& nebulae)
     return last.pos.x + last.rec.width;
 }
 
-void ResetGame(Game& game)
+void ResetToMenuGame(Game& game)
 {
     game.state = GameState::Menu;
     game.collision = false;
-
-    // Reset scarfy
-    game.scarfy = CreateScarfy(game);
-
-    // Reset nebulae positions and animations
-    InitNebulaSystem(game.nebulae, game);
 }
 
 void UpdateGame(Game& game, float dt)
 {
+    UpdateMusicStream(game.menuMusic);
+    UpdateMusicStream(game.gameMusic);
+
     switch (game.state)
     {
         case GameState::Menu:
             if (IsKeyPressed(KEY_SPACE))
             {
-                game.state = GameState::Playing;
+                StartGame(game);
+                OnGameStateChanged(game, GameState::Playing);
             }
             break;
 
@@ -344,15 +382,18 @@ void UpdateGame(Game& game, float dt)
             UpdateNebulaePos(game.nebulae, dt);
             UpdateNebulaAnimations(game.nebulae, dt);
             CheckNebulaCollisions(game);
-
-            if (game.scarfy.data.pos.x >= GetFinishLineX(game.nebulae)) game.state = GameState::Win;
+            
+            if (game.scarfy.data.pos.x >= GetFinishLineX(game.nebulae)) {
+                OnGameStateChanged(game, GameState::Win);
+            }
             break;
 
         case GameState::GameOver:
         case GameState::Win:
             if (IsKeyPressed(KEY_SPACE))
             {
-                ResetGame(game);
+                ResetToMenuGame(game);
+                OnGameStateChanged(game, GameState::Menu);
             }
             break;
     }
@@ -367,12 +408,22 @@ void DrawGame(const Game& game)
         100    // height
     };
 
-    Color overlayColor = { 0, 0, 0, 150 };
+    Rectangle overlayMenu{
+        80,    // x
+        75,   // y
+        375,   // width
+        150    // height
+    };
+
+    Color overlayColor = { 0, 0, 0, 200 };
 
     switch (game.state)
     {
         case GameState::Menu:
-            DrawRectangleRec(overlay, overlayColor);
+            DrawParallax(game.background);
+            DrawParallax(game.midGround);
+            DrawParallax(game.foreground);
+            DrawRectangleRec(overlayMenu, overlayColor);
             DrawText("DAPPER DASHER", 90, 120, 40, DARKGRAY);
             DrawText("Press SPACE to start", 110, 180, 20, GRAY);
             break;
@@ -403,14 +454,6 @@ void DrawGame(const Game& game)
             DrawText("Press SPACE to go to menu", 100, 240, 20, GRAY);
             break;
     }
-
-    // if (game.state == GameState::GameOver) {
-    //     DrawText("Game Over!", 120, 190, 40, RED);
-    // }
-
-    // if (game.state == GameState::Win) {
-    //     DrawText("You Win!", 140, 190, 40, GREEN);
-    // }
 }
 
 int main()
@@ -421,8 +464,9 @@ int main()
     windowDimensions[1] = 380;
 
     InitWindow(windowDimensions[0], windowDimensions[1], "Dapper Dasher!");
+    InitAudioDevice();
+    
     Game game = InitGame();
-
     SetTargetFPS(60);
     while (!WindowShouldClose()) {
 
@@ -431,27 +475,9 @@ int main()
         // start drawing
         BeginDrawing();
         ClearBackground(WHITE);
-
         UpdateGame(game, dT);
+    
         DrawGame(game);
-
-        // if (game.collision)
-        // {
-        //     // DrawText("Game Over!", windowDimensions[0]/4, windowDimensions[1]/2, 40, RED);
-        // }
-        // else if (game.scarfy.data.pos.x >= GetFinishLineX(game.nebulae))
-        // {
-        //     // DrawText("You Win!", windowDimensions[0]/4, windowDimensions[1]/2, 40, GREEN);
-        // }
-        // else 
-        // {
-        //     // draw nebula
-        //     DrawNebulae(game);
-
-        //     // draw scarfy
-        //     DrawTextureRec(game.scarfy.texture, game.scarfy.data.rec, game.scarfy.data.pos, WHITE);
-        // }
-        
 
         // stop drawing; 
         EndDrawing();
@@ -462,5 +488,10 @@ int main()
     UnloadTexture(game.midGround.texture);
     UnloadTexture(game.foreground.texture);
 
+    StopMusicStream(game.menuMusic);
+    StopMusicStream(game.gameMusic);
+    UnloadMusicStream(game.menuMusic);
+    UnloadMusicStream(game.gameMusic);
+    CloseAudioDevice();
     CloseWindow();
 }
