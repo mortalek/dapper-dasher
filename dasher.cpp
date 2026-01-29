@@ -29,6 +29,7 @@ struct Scarfy
 
 enum class GameState
 {
+    Menu,
     Playing,
     GameOver,
     Win
@@ -80,7 +81,7 @@ AnimData updateAnimData(AnimData data, float deltaTime, int maxFrame)
 
 void InitNebulaSystem(NebulaSystem& nebula, Game& game)
 {
-    nebula.count = 3; // startowa trudność
+    nebula.count = 3; // for sake of testing 3 it is
     nebula.velocity = -200;
     nebula.texture = LoadTexture("textures/12_nebula_spritesheet.png");
 
@@ -252,6 +253,26 @@ Game InitGame()
     return game;
 }
 
+void UpdateParallax(ParallaxLayer& layer, float dt)
+{
+    layer.x -= layer.speed * dt;
+
+    if (layer.x <= -layer.texture.width * layer.scale)
+        layer.x = 0.0f;
+}
+
+
+void DrawParallax(const ParallaxLayer& layer)
+{
+    Vector2 pos1{ layer.x, 0.0f };
+    Vector2 pos2{ layer.x + layer.texture.width * layer.scale, 0.0f };
+
+    DrawTextureEx(layer.texture, pos1, 0.0f, layer.scale, WHITE);
+    DrawTextureEx(layer.texture, pos2, 0.0f, layer.scale, WHITE);
+}
+
+
+
 void InitScarfy(AnimData& scarfy, int windowWidth, int windowHeight, Texture2D scarfyTexture)
 {
     scarfy.rec.x = 0.0f;
@@ -290,6 +311,107 @@ float GetFinishLineX(const NebulaSystem& nebulae)
     return last.pos.x + last.rec.width;
 }
 
+void ResetGame(Game& game)
+{
+    game.state = GameState::Menu;
+    game.collision = false;
+
+    // Reset scarfy
+    game.scarfy = CreateScarfy(game);
+
+    // Reset nebulae positions and animations
+    InitNebulaSystem(game.nebulae, game);
+}
+
+void UpdateGame(Game& game, float dt)
+{
+    switch (game.state)
+    {
+        case GameState::Menu:
+            if (IsKeyPressed(KEY_SPACE))
+            {
+                game.state = GameState::Playing;
+            }
+            break;
+
+        case GameState::Playing:
+
+            UpdateParallax(game.background, dt);
+            UpdateParallax(game.midGround, dt);
+            UpdateParallax(game.foreground, dt);
+
+            UpdateScarfy(game.scarfy, game.windowHeight, dt);
+            UpdateNebulaePos(game.nebulae, dt);
+            UpdateNebulaAnimations(game.nebulae, dt);
+            CheckNebulaCollisions(game);
+
+            if (game.scarfy.data.pos.x >= GetFinishLineX(game.nebulae)) game.state = GameState::Win;
+            break;
+
+        case GameState::GameOver:
+        case GameState::Win:
+            if (IsKeyPressed(KEY_SPACE))
+            {
+                ResetGame(game);
+            }
+            break;
+    }
+}
+
+void DrawGame(const Game& game)
+{
+    Rectangle overlay{
+        80,    // x
+        180,   // y
+        350,   // width
+        100    // height
+    };
+
+    Color overlayColor = { 0, 0, 0, 150 };
+
+    switch (game.state)
+    {
+        case GameState::Menu:
+            DrawRectangleRec(overlay, overlayColor);
+            DrawText("DAPPER DASHER", 90, 120, 40, DARKGRAY);
+            DrawText("Press SPACE to start", 110, 180, 20, GRAY);
+            break;
+
+        case GameState::Playing:
+            DrawParallax(game.background);
+            DrawParallax(game.midGround);
+            DrawParallax(game.foreground);
+            DrawNebulae(game);
+            DrawTextureRec(game.scarfy.texture, game.scarfy.data.rec, game.scarfy.data.pos, WHITE);
+            break;
+
+        case GameState::GameOver:
+            DrawParallax(game.background);
+            DrawParallax(game.midGround);
+            DrawParallax(game.foreground);
+            DrawRectangleRec(overlay, overlayColor);
+            DrawText("Game Over!", 120, 190, 40, RED);
+            DrawText("Press SPACE to go to menu", 100, 240, 20, GRAY);
+            break;
+
+        case GameState::Win:
+            DrawParallax(game.background);
+            DrawParallax(game.midGround);
+            DrawParallax(game.foreground);
+            DrawRectangleRec(overlay, overlayColor);
+            DrawText("You Win!", 140, 190, 40, GREEN);
+            DrawText("Press SPACE to go to menu", 100, 240, 20, GRAY);
+            break;
+    }
+
+    // if (game.state == GameState::GameOver) {
+    //     DrawText("Game Over!", 120, 190, 40, RED);
+    // }
+
+    // if (game.state == GameState::Win) {
+    //     DrawText("You Win!", 140, 190, 40, GREEN);
+    // }
+}
 
 int main()
 
@@ -310,55 +432,25 @@ int main()
         BeginDrawing();
         ClearBackground(WHITE);
 
-        UpdateAndDrawLayer(
-            game.background.texture,
-            game.background.x,
-            game.background.speed,
-            dT,
-            game.background.scale
-        );
+        UpdateGame(game, dT);
+        DrawGame(game);
 
-        UpdateAndDrawLayer(
-            game.midGround.texture,
-            game.midGround.x,
-            game.midGround.speed,
-            dT,
-            game.midGround.scale
-        );
+        // if (game.collision)
+        // {
+        //     // DrawText("Game Over!", windowDimensions[0]/4, windowDimensions[1]/2, 40, RED);
+        // }
+        // else if (game.scarfy.data.pos.x >= GetFinishLineX(game.nebulae))
+        // {
+        //     // DrawText("You Win!", windowDimensions[0]/4, windowDimensions[1]/2, 40, GREEN);
+        // }
+        // else 
+        // {
+        //     // draw nebula
+        //     DrawNebulae(game);
 
-        UpdateAndDrawLayer(
-            game.foreground.texture,
-            game.foreground.x,
-            game.foreground.speed,
-            dT,
-            game.foreground.scale
-        );
-        
-        UpdateScarfy(game.scarfy, game.windowHeight, dT);
-         // update nebula position 
-        UpdateNebulaePos(game.nebulae, dT);
-
-        // update nebula animation frame 
-        UpdateNebulaAnimations(game.nebulae, dT);
-
-        CheckNebulaCollisions(game);
-
-        if (game.collision)
-        {
-            DrawText("Game Over!", windowDimensions[0]/4, windowDimensions[1]/2, 40, RED);
-        }
-        else if (game.scarfy.data.pos.x >= GetFinishLineX(game.nebulae))
-        {
-            DrawText("You Win!", windowDimensions[0]/4, windowDimensions[1]/2, 40, GREEN);
-        }
-        else 
-        {
-            // draw nebula
-            DrawNebulae(game);
-
-            // draw scarfy
-            DrawTextureRec(game.scarfy.texture, game.scarfy.data.rec, game.scarfy.data.pos, WHITE);
-        }
+        //     // draw scarfy
+        //     DrawTextureRec(game.scarfy.texture, game.scarfy.data.rec, game.scarfy.data.pos, WHITE);
+        // }
         
 
         // stop drawing; 
