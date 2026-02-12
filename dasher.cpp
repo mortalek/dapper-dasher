@@ -1,6 +1,7 @@
 #include "raylib.h"
 
-const int maxNebulae = 3;
+const int maxNebulae = 4;
+const int maxAsteroids = 3;
 
 struct AnimData
 {
@@ -16,6 +17,18 @@ struct NebulaSystem
     AnimData items[maxNebulae];
     int count;
     int velocity;     // nebula X velocity (pixels/second)
+};
+
+struct AsteroidData {
+    AnimData data;
+    bool destroyed = false;
+};
+
+struct AsteroidSystem {
+    Texture2D texture;
+    AsteroidData items[maxAsteroids];
+    int count;
+    int velocity;
 };
 
 struct Scarfy
@@ -53,6 +66,7 @@ struct Game
 
     Scarfy scarfy;
     NebulaSystem nebulae;
+    AsteroidSystem asteroid;
 
     ParallaxLayer background;
     ParallaxLayer midGround;
@@ -84,9 +98,11 @@ AnimData updateAnimData(AnimData data, float deltaTime, int maxFrame)
     return data;
 }
 
-void InitNebulaSystem(NebulaSystem& nebula, Game& game)
+void InitNebulaSystem(Game& game)
 {
-    nebula.count = 3; // for sake of testing 3 it is
+    NebulaSystem& nebula = game.nebulae;
+    float spacing = 500.0f; // Increased spacing between nebulas
+    nebula.count = 4; // for sake of testing 3 it is
     nebula.velocity = -200;
     nebula.texture = LoadTexture("textures/12_nebula_spritesheet.png");
 
@@ -100,7 +116,7 @@ void InitNebulaSystem(NebulaSystem& nebula, Game& game)
         nebula.items[i].frame = 0;
         nebula.items[i].runningTime = 0.0;
         nebula.items[i].updateTime = 1.0 / 16.0;
-        nebula.items[i].pos.x = game.windowWidth + i * 300;
+        nebula.items[i].pos.x = game.windowWidth + i * spacing;
     }
 }
 
@@ -132,6 +148,54 @@ void UpdateNebulaAnimations(NebulaSystem& nebulae, float dt)
         nebulae.items[i] = updateAnimData(nebulae.items[i], dt, 7);
     }
 }
+
+void InitAsteroidSystem(Game& game) {
+    AsteroidSystem& asteroid = game.asteroid;
+    NebulaSystem& nebula = game.nebulae;
+    const float baseGap = 300.0f; // Gap between nebula and asteroid
+
+    asteroid.texture = LoadTexture("textures/Meteor_01.png");;
+    asteroid.count = 3;
+    asteroid.velocity = -200;
+    for (int i = 0; i < asteroid.count; ++i) {
+        float gap = baseGap + i * 400.0f;
+
+        asteroid.items[i].data.rec.x = 0.0f;
+        asteroid.items[i].data.rec.y = 0.0f;
+        asteroid.items[i].data.rec.width = asteroid.texture.width; 
+        asteroid.items[i].data.rec.height = asteroid.texture.height;
+        asteroid.items[i].data.frame = 0;
+        asteroid.items[i].data.updateTime = 1.0f / 12.0f;
+        asteroid.items[i].data.runningTime = 0.0f;
+        asteroid.items[i].destroyed = false;
+
+        // Place asteroid after nebula with a gap
+        asteroid.items[i].data.pos.x = nebula.items[2].pos.x + gap;
+        asteroid.items[i].data.pos.y = game.windowHeight - asteroid.texture.height; // Adjust vertical position as needed
+    }
+}
+
+void DrawAsteroid(const Game& game)
+{
+    for (int i = 0; i < game.asteroid.count; ++i)
+    {
+        DrawTextureRec(
+            game.asteroid.texture,
+            game.asteroid.items[i].data.rec,
+            game.asteroid.items[i].data.pos,
+            WHITE
+        );
+    }
+}
+
+void UpdateAsteroidPos(AsteroidSystem& asteroid, float dt)
+{
+    for (int i = 0; i < asteroid.count; ++i)
+    {
+        asteroid.items[i].data.pos.x += asteroid.velocity * dt;
+    }
+}
+
 
 void OnGameStateChanged(Game& game, GameState newState)
 {
@@ -176,6 +240,38 @@ void CheckNebulaCollisions(Game& game)
             nebula.pos.y + pad,
             nebula.rec.width - 2 * pad,
             nebula.rec.height - 2 * pad
+        };
+
+        if (CheckCollisionRecs(nebRec, scarfyRec))
+        {
+            game.collision = true;
+            OnGameStateChanged(game, GameState::GameOver);
+
+            return;
+        }
+    }
+}
+
+void CheckAsteroidCollisions(Game& game)
+{
+    const float pad = 50.0f;
+
+    Rectangle scarfyRec{
+        game.scarfy.data.pos.x,
+        game.scarfy.data.pos.y,
+        game.scarfy.data.rec.width,
+        game.scarfy.data.rec.height
+    };
+
+    for (int i = 0; i < game.asteroid.count; ++i)
+    {
+        AnimData& asteroid = game.asteroid.items[i].data;
+
+        Rectangle nebRec{
+            asteroid.pos.x + pad,
+            asteroid.pos.y + pad,
+            asteroid.rec.width - 2 * pad,
+            asteroid.rec.height - 2 * pad
         };
 
         if (CheckCollisionRecs(nebRec, scarfyRec))
@@ -295,7 +391,8 @@ void StartGame(Game& game)
 {
     game.collision = false;
     game.scarfy = CreateScarfy(game);
-    InitNebulaSystem(game.nebulae, game);
+    InitNebulaSystem(game);
+    InitAsteroidSystem(game);
 }
 
 void UpdateParallax(ParallaxLayer& layer, float dt)
@@ -350,10 +447,10 @@ void UpdateAndDrawLayer(Texture2D texture, float& x, float speed, float dt, floa
     DrawTextureEx(texture, pos2, 0.0f, scale, WHITE);
 }
 
-float GetFinishLineX(const NebulaSystem& nebulae)
+float GetFinishLineX(const AsteroidSystem& asteroid)
 {
-    const AnimData& last = nebulae.items[nebulae.count - 1];
-    return last.pos.x + last.rec.width;
+    const AsteroidData& last = asteroid.items[asteroid.count - 1];
+    return last.data.pos.x + last.data.rec.width;
 }
 
 void ResetToMenuGame(Game& game)
@@ -386,9 +483,11 @@ void UpdateGame(Game& game, float dt)
             UpdateScarfy(game.scarfy, game.windowHeight, dt);
             UpdateNebulaePos(game.nebulae, dt);
             UpdateNebulaAnimations(game.nebulae, dt);
+            UpdateAsteroidPos(game.asteroid, dt);
             CheckNebulaCollisions(game);
+            CheckAsteroidCollisions(game);
             
-            if (game.scarfy.data.pos.x >= GetFinishLineX(game.nebulae)) {
+            if (game.scarfy.data.pos.x >= GetFinishLineX(game.asteroid)) {
                 OnGameStateChanged(game, GameState::Win);
             }
             break;
@@ -438,6 +537,7 @@ void DrawGame(const Game& game)
             DrawParallax(game.midGround);
             DrawParallax(game.foreground);
             DrawNebulae(game);
+            DrawAsteroid(game);
             DrawTextureRec(game.scarfy.texture, game.scarfy.data.rec, game.scarfy.data.pos, WHITE);
             break;
 
