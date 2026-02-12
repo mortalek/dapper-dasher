@@ -25,6 +25,8 @@ struct Scarfy
     int velocity;     
     bool isInAir;
     int jumpVel;
+    int jumpCount = 0;
+    int maxJumps = 2;
 };
 
 enum class GameState
@@ -223,6 +225,7 @@ void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
     //    rectangle is on the ground
         scarfy.velocity = 0;
         scarfy.isInAir = false;
+        scarfy.jumpCount = 0;
     }
     else 
     {
@@ -231,9 +234,11 @@ void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
         scarfy.isInAir = true;
     }
     // jump check
-    if (IsKeyPressed(KEY_SPACE) && !scarfy.isInAir)
+    if (IsKeyPressed(KEY_SPACE) && scarfy.jumpCount < scarfy.maxJumps)
     {
-        scarfy.velocity += scarfy.jumpVel;
+        scarfy.velocity = scarfy.jumpVel;
+        scarfy.isInAir = true;
+        scarfy.jumpCount++;
     }
     // update scarfy position 
     scarfy.data.pos.y += scarfy.velocity * dt;
@@ -277,7 +282,7 @@ Game InitGame()
     };
 
     game.menuMusic = LoadMusicStream("audio/where_it_leads.mp3");
-    game.gameMusic = LoadMusicStream("audio/escape_velocity.mp3");
+    game.gameMusic = LoadMusicStream("audio/vei.mp3");
 
     game.menuMusic.looping = true;
     game.gameMusic.looping = true;
