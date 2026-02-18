@@ -1,8 +1,24 @@
 #include "raylib.h"
+#include <cstdlib>  
+#include <cmath>
 
 const int maxNebulae = 4;
 const int maxAsteroids = 3;
 
+struct Particle {
+    Vector2 pos;
+    Vector2 velocity;
+    Color color;
+    float lifetime;
+    float maxLifetime;
+};
+
+const int maxParticles = 100;
+
+struct ParticleSystem {
+    Particle particles[maxParticles];
+    int count = 0;
+};
 struct AnimData
 {
     Rectangle rec;
@@ -40,6 +56,14 @@ struct Scarfy
     int jumpVel;
     int jumpCount = 0;
     int maxJumps = 2;
+
+    // Dash mechanics
+    bool isDashing = false;
+    float dashDuration = 0.2f;  // 0.2 seconds
+    float dashTimer = 0.0f;
+    float dashSpeed = 800.0f;   // pixels/second
+    float dashCooldown = 0.5f;  // cooldown between dashes
+    float dashCooldownTimer = 0.0f;
 };
 
 enum class GameState
@@ -67,6 +91,7 @@ struct Game
     Scarfy scarfy;
     NebulaSystem nebulae;
     AsteroidSystem asteroid;
+    ParticleSystem particles;
 
     ParallaxLayer background;
     ParallaxLayer midGround;
@@ -101,8 +126,8 @@ AnimData updateAnimData(AnimData data, float deltaTime, int maxFrame)
 void InitNebulaSystem(Game& game)
 {
     NebulaSystem& nebula = game.nebulae;
-    float spacing = 500.0f; // Increased spacing between nebulas
-    nebula.count = 4; // for sake of testing 3 it is
+    float spacing = 400.0f; // Increased spacing between nebulas
+    nebula.count = 3; // for sake of testing 3 it is
     nebula.velocity = -200;
     nebula.texture = LoadTexture("textures/12_nebula_spritesheet.png");
 
@@ -152,13 +177,13 @@ void UpdateNebulaAnimations(NebulaSystem& nebulae, float dt)
 void InitAsteroidSystem(Game& game) {
     AsteroidSystem& asteroid = game.asteroid;
     NebulaSystem& nebula = game.nebulae;
-    const float baseGap = 300.0f; // Gap between nebula and asteroid
+    const float baseGap = 500.0f; // Gap between nebula and asteroid
 
     asteroid.texture = LoadTexture("textures/Meteor_01.png");;
     asteroid.count = 3;
     asteroid.velocity = -200;
     for (int i = 0; i < asteroid.count; ++i) {
-        float gap = baseGap + i * 400.0f;
+        float gap = baseGap + i * 450.0f;
 
         asteroid.items[i].data.rec.x = 0.0f;
         asteroid.items[i].data.rec.y = 0.0f;
@@ -170,7 +195,7 @@ void InitAsteroidSystem(Game& game) {
         asteroid.items[i].destroyed = false;
 
         // Place asteroid after nebula with a gap
-        asteroid.items[i].data.pos.x = nebula.items[2].pos.x + gap;
+        asteroid.items[i].data.pos.x = nebula.items[nebula.count - 1].pos.x + gap;
         asteroid.items[i].data.pos.y = game.windowHeight - asteroid.texture.height; // Adjust vertical position as needed
     }
 }
@@ -179,6 +204,8 @@ void DrawAsteroid(const Game& game)
 {
     for (int i = 0; i < game.asteroid.count; ++i)
     {
+        if (game.asteroid.items[i].destroyed) continue;
+
         DrawTextureRec(
             game.asteroid.texture,
             game.asteroid.items[i].data.rec,
@@ -217,6 +244,57 @@ void OnGameStateChanged(Game& game, GameState newState)
         case GameState::Playing:
             PlayMusicStream(game.gameMusic);
             break;
+    }
+}
+
+void SpawnParticles(ParticleSystem& system, Vector2 position, int count)
+{
+    for (int i = 0; i < count && system.count < maxParticles; ++i)
+    {
+        Particle& p = system.particles[system.count++];
+        
+        p.pos = position;
+        p.maxLifetime = 0.5f + GetRandomValue(0, 50) / 100.0f;
+        p.lifetime = p.maxLifetime;
+        
+        float angle = GetRandomValue(0, 360) * DEG2RAD;
+        float speed = 100.0f + GetRandomValue(0, 200);
+        p.velocity = { cosf(angle) * speed, sinf(angle) * speed };
+        
+        p.color = (GetRandomValue(0, 1) == 0) ? ORANGE : YELLOW;
+    }
+}
+
+void UpdateParticles(ParticleSystem& system, float dt)
+{
+    for (int i = 0; i < system.count; ++i)
+    {
+        Particle& p = system.particles[i];
+        
+        p.lifetime -= dt;
+        p.pos.x += p.velocity.x * dt;
+        p.pos.y += p.velocity.y * dt;
+        p.velocity.y += 500.0f * dt; // Gravity
+        
+        // Remove dead particles
+        if (p.lifetime <= 0.0f)
+        {
+            system.particles[i] = system.particles[--system.count];
+            --i;
+        }
+    }
+}
+
+void DrawParticles(const ParticleSystem& system)
+{
+    for (int i = 0; i < system.count; ++i)
+    {
+        const Particle& p = system.particles[i];
+        float alpha = (p.lifetime / p.maxLifetime) * 255;
+        Color c = p.color;
+        c.a = (unsigned char)alpha;
+        
+        DrawCircleV(p.pos, 3.0f, c);
     }
 }
 
@@ -265,26 +343,37 @@ void CheckAsteroidCollisions(Game& game)
 
     for (int i = 0; i < game.asteroid.count; ++i)
     {
+        if (game.asteroid.items[i].destroyed) continue;
+
         AnimData& asteroid = game.asteroid.items[i].data;
 
-        Rectangle nebRec{
+        Rectangle asteroidRec{
             asteroid.pos.x + pad,
             asteroid.pos.y + pad,
             asteroid.rec.width - 2 * pad,
             asteroid.rec.height - 2 * pad
         };
 
-        if (CheckCollisionRecs(nebRec, scarfyRec))
+        if (CheckCollisionRecs(asteroidRec, scarfyRec))
         {
-            game.collision = true;
-            OnGameStateChanged(game, GameState::GameOver);
+            if (game.scarfy.isDashing) {
+                // Destroy asteroid while dashing
+                game.asteroid.items[i].destroyed = true;
 
-            return;
+                Vector2 center = { 
+                    asteroid.pos.x + asteroid.rec.width / 2.0f,
+                    asteroid.pos.y + asteroid.rec.height / 2.0f
+                };
+                SpawnParticles(game.particles, center, 20);
+            } else {
+                // Game over if not dashing
+                game.collision = true;
+                OnGameStateChanged(game, GameState::GameOver);
+                return;
+            }
         }
     }
 }
-
-
 
 Scarfy CreateScarfy(const Game& game)
 {
@@ -313,8 +402,70 @@ bool isOnGround(AnimData data, int windowHeight)
     return data.pos.y >= windowHeight - data.rec.height;
 }
 
+void DrawScarfy(const Scarfy& scarfy)
+{
+    // Draw dash trail behind scarfy
+    if (scarfy.isDashing) {
+        for (int i = 1; i <= 3; ++i) {
+            float offset = i * 15.0f;
+            float alpha = 255 * (1.0f - i / 4.0f);
+            Color trailColor = { 135, 206, 235, (unsigned char)alpha };
+            Vector2 trailPos = { scarfy.data.pos.x - offset, scarfy.data.pos.y };
+            DrawTextureRec(scarfy.texture, scarfy.data.rec, trailPos, trailColor);
+        }
+    }
+    
+    // Draw scarfy with dash tint
+    Color tint = scarfy.isDashing ? SKYBLUE : WHITE;
+    DrawTextureRec(scarfy.texture, scarfy.data.rec, scarfy.data.pos, tint);
+    
+    // Draw cooldown indicator
+    if (scarfy.dashCooldownTimer > 0.0f) {
+        float barWidth = 60.0f;
+        float barHeight = 6.0f;
+        float fillPercent = 1.0f - (scarfy.dashCooldownTimer / scarfy.dashCooldown);
+        
+        Vector2 barPos = { scarfy.data.pos.x, scarfy.data.pos.y - 15.0f };
+        DrawRectangle(barPos.x, barPos.y, barWidth, barHeight, GRAY);
+        DrawRectangle(barPos.x, barPos.y, barWidth * fillPercent, barHeight, SKYBLUE);
+    }
+}
+
 void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
 {
+    // Update dash cooldown
+    if (scarfy.dashCooldownTimer > 0.0f) {
+        scarfy.dashCooldownTimer -= dt;
+    }
+
+    // Dash input (e.g., Shift key)
+    if (IsKeyPressed(KEY_LEFT_SHIFT) && scarfy.dashCooldownTimer <= 0.0f && !scarfy.isDashing) {
+        scarfy.isDashing = true;
+        scarfy.dashTimer = scarfy.dashDuration;
+        scarfy.dashCooldownTimer = scarfy.dashCooldown;
+    }
+
+    // Update dash
+    if (scarfy.isDashing) {
+        scarfy.dashTimer -= dt;
+        scarfy.data.pos.x += scarfy.dashSpeed * dt;
+        
+        if (scarfy.dashTimer <= 0.0f) {
+            scarfy.isDashing = false;
+        }
+    } else {
+        // Return to middle position when not dashing
+        float targetX = 256.0f - scarfy.data.rec.width / 2.0f; // windowWidth / 2
+        float returnSpeed = 200.0f;
+        
+        if (scarfy.data.pos.x > targetX) {
+            scarfy.data.pos.x -= returnSpeed * dt;
+            if (scarfy.data.pos.x < targetX) {
+                scarfy.data.pos.x = targetX;
+            }
+        }
+    }
+
     // perform ground check
     if (isOnGround(scarfy.data, windowHeight)) 
     {
@@ -484,6 +635,7 @@ void UpdateGame(Game& game, float dt)
             UpdateNebulaePos(game.nebulae, dt);
             UpdateNebulaAnimations(game.nebulae, dt);
             UpdateAsteroidPos(game.asteroid, dt);
+            UpdateParticles(game.particles, dt); 
             CheckNebulaCollisions(game);
             CheckAsteroidCollisions(game);
             
@@ -538,7 +690,8 @@ void DrawGame(const Game& game)
             DrawParallax(game.foreground);
             DrawNebulae(game);
             DrawAsteroid(game);
-            DrawTextureRec(game.scarfy.texture, game.scarfy.data.rec, game.scarfy.data.pos, WHITE);
+            DrawScarfy(game.scarfy);
+            DrawParticles(game.particles); 
             break;
 
         case GameState::GameOver:
