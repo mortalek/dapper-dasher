@@ -64,6 +64,10 @@ struct Scarfy
     float dashSpeed = 800.0f;   // pixels/second
     float dashCooldown = 0.5f;  // cooldown between dashes
     float dashCooldownTimer = 0.0f;
+
+      // Boss fight movement
+    bool canMoveHorizontally = false;
+    float moveSpeed = 200.0f;
 };
 
 enum class GameState
@@ -431,21 +435,39 @@ void DrawScarfy(const Scarfy& scarfy)
     }
 }
 
-void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
+void UpdateScarfy(Scarfy& scarfy, int windowHeight, int windowWidth, float dt)
 {
     // Update dash cooldown
     if (scarfy.dashCooldownTimer > 0.0f) {
         scarfy.dashCooldownTimer -= dt;
     }
 
-    // Dash input (e.g., Shift key)
+     // Horizontal movement (for boss fight)
+    if (scarfy.canMoveHorizontally) {
+        if (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT)) {
+            scarfy.data.pos.x -= scarfy.moveSpeed * dt;
+        }
+        if (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT)) {
+            scarfy.data.pos.x += scarfy.moveSpeed * dt;
+        }
+
+        // Clamp to screen bounds
+        if (scarfy.data.pos.x < 0.0f) {
+            scarfy.data.pos.x = 0.0f;
+        }
+        if (scarfy.data.pos.x > windowWidth - scarfy.data.rec.width) {
+            scarfy.data.pos.x = windowWidth - scarfy.data.rec.width;
+        }
+    }
+
+    // Dash input
     if (IsKeyPressed(KEY_LEFT_SHIFT) && scarfy.dashCooldownTimer <= 0.0f && !scarfy.isDashing) {
         scarfy.isDashing = true;
         scarfy.dashTimer = scarfy.dashDuration;
         scarfy.dashCooldownTimer = scarfy.dashCooldown;
     }
 
-    // Update dash
+   // Update dash
     if (scarfy.isDashing) {
         scarfy.dashTimer -= dt;
         scarfy.data.pos.x += scarfy.dashSpeed * dt;
@@ -453,9 +475,9 @@ void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
         if (scarfy.dashTimer <= 0.0f) {
             scarfy.isDashing = false;
         }
-    } else {
-        // Return to middle position when not dashing
-        float targetX = 256.0f - scarfy.data.rec.width / 2.0f; // windowWidth / 2
+    } else if (!scarfy.canMoveHorizontally) {  // Add this check
+        // Return to middle position when not dashing (only in normal mode)
+        float targetX = 256.0f - scarfy.data.rec.width / 2.0f;
         float returnSpeed = 200.0f;
         
         if (scarfy.data.pos.x > targetX) {
@@ -490,8 +512,23 @@ void UpdateScarfy(Scarfy& scarfy, int windowHeight, float dt)
     // update scarfy position 
     scarfy.data.pos.y += scarfy.velocity * dt;
 
-    if (!scarfy.isInAir)
+    // Animation logic
+    bool isMovingHorizontally = scarfy.canMoveHorizontally && 
+        (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT));
+
+    if (!scarfy.isInAir && !scarfy.canMoveHorizontally)
     {
+        scarfy.data = updateAnimData(scarfy.data, dt, 5);
+    }
+    else if (!scarfy.isInAir && scarfy.canMoveHorizontally && !isMovingHorizontally)
+    {
+        // Idle during boss fight - don't animate, keep frame 0
+        scarfy.data.frame = 0;
+        scarfy.data.rec.x = 0;
+    }
+    else if (!scarfy.isInAir && isMovingHorizontally)
+    {
+        // Animate when moving during boss fight
         scarfy.data = updateAnimData(scarfy.data, dt, 5);
     }
 }
@@ -626,24 +663,29 @@ void UpdateGame(Game& game, float dt)
             break;
 
         case GameState::Playing:
-
-            UpdateParallax(game.background, dt);
-            UpdateParallax(game.midGround, dt);
-            UpdateParallax(game.foreground, dt);
-
-            UpdateScarfy(game.scarfy, game.windowHeight, dt);
-            UpdateNebulaePos(game.nebulae, dt);
+        {
+            bool reachedFinish = game.scarfy.data.pos.x >= GetFinishLineX(game.asteroid);
+        
+            if (!reachedFinish) {
+                UpdateParallax(game.background, dt);
+                UpdateParallax(game.midGround, dt);
+                UpdateParallax(game.foreground, dt);
+                UpdateNebulaePos(game.nebulae, dt);
+                UpdateAsteroidPos(game.asteroid, dt);
+            } else {
+                    game.scarfy.canMoveHorizontally = true;
+            }
+            UpdateScarfy(game.scarfy, game.windowHeight, game.windowWidth, dt);
             UpdateNebulaAnimations(game.nebulae, dt);
-            UpdateAsteroidPos(game.asteroid, dt);
             UpdateParticles(game.particles, dt); 
             CheckNebulaCollisions(game);
             CheckAsteroidCollisions(game);
             
-            if (game.scarfy.data.pos.x >= GetFinishLineX(game.asteroid)) {
-                OnGameStateChanged(game, GameState::Win);
-            }
+            // if (reachedFinish) {
+            //     OnGameStateChanged(game, GameState::Win);
+            // }
             break;
-
+        }
         case GameState::GameOver:
         case GameState::Win:
             if (IsKeyPressed(KEY_SPACE))
