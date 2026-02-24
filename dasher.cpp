@@ -5,6 +5,8 @@
 const int maxNebulae = 4;
 const int maxAsteroids = 3;
 
+enum class BossState { Idle, Walking, Attacking, Hit, Dead };
+
 struct Particle {
     Vector2 pos;
     Vector2 velocity;
@@ -26,6 +28,26 @@ struct AnimData
     int frame;
     float updateTime;
     float runningTime;
+};
+
+struct Boss {
+    Texture2D texAttack;
+    Texture2D texDeath;
+    Texture2D texGetHit;
+    Texture2D texIdle;
+    Texture2D texWalk;
+    AnimData data;
+    BossState state = BossState::Idle;
+    float scale = 3.0f;
+    bool active = false;
+    bool defeated = false;
+    float hp = 100.0f;
+    float maxHp = 100.0f;
+    float attackTimer = 2.0f;
+    float attackCooldown = 2.0f;
+    float stateTimer = 0.0f;
+    float moveSpeed = 80.0f;
+    float introTargetX = 0.0f;
 };
 struct NebulaSystem
 {
@@ -107,6 +129,10 @@ struct Game
     Music gameMusic;
 
     bool collision;
+
+    Boss boss;
+
+    bool reachedFinish = false;
 };
 
 AnimData updateAnimData(AnimData data, float deltaTime, int maxFrame)
@@ -133,7 +159,7 @@ void InitNebulaSystem(Game& game)
 {
     NebulaSystem& nebula = game.nebulae;
     float spacing = 400.0f; // Increased spacing between nebulas
-    nebula.count = 3; // for sake of testing 3 it is
+    nebula.count = 1; // for sake of testing 3 it is
     nebula.velocity = -200;
     nebula.texture = LoadTexture("textures/12_nebula_spritesheet.png");
 
@@ -180,13 +206,87 @@ void UpdateNebulaAnimations(NebulaSystem& nebulae, float dt)
     }
 }
 
+int GetBossMaxFrame(BossState state) {
+    switch (state) {
+        case BossState::Attacking: return 15;
+        case BossState::Dead:      return 5;
+        case BossState::Hit:       return 2;
+        case BossState::Walking:   return 7;
+        default:                   return 8; // Idle: 9 frames
+    }
+}
+
+void InitBoss(Boss& boss, int windowWidth, int windowHeight) {
+    boss.texIdle = LoadTexture("textures/boss/Idle.png");
+    boss.state = BossState::Idle;
+    boss.active = true;
+
+    boss.data.rec = { 0, 0, boss.texIdle.width / 9.0f, (float)boss.texIdle.height };
+    boss.data.frame = 0;
+    boss.data.runningTime = 0.0f;
+    boss.data.updateTime = 1.0f / 12.0f;
+    boss.introTargetX = (float)windowWidth - (boss.data.rec.width * boss.scale) + 20.0f;
+    
+    boss.data.pos = {
+        windowWidth + 20.0f,
+        windowHeight - boss.data.rec.height * boss.scale + (boss.data.rec.height * boss.scale * 0.3f)
+    };
+}
+
+Texture2D GetBossTexture(const Boss& boss) {
+    switch (boss.state) {
+        case BossState::Attacking: return boss.texAttack;
+        case BossState::Dead:      return boss.texDeath;
+        case BossState::Hit:       return boss.texGetHit;
+        case BossState::Walking:   return boss.texWalk;
+        default:                   return boss.texIdle;
+    }
+}
+
+void DrawBoss(const Boss& boss, int windowWidth) {
+    if (!boss.active) return;
+
+    Texture2D tex = GetBossTexture(boss);
+    Rectangle src = boss.data.rec;
+    src.width = -fabsf(src.width);
+
+    Rectangle dst = {
+        boss.data.pos.x,
+        boss.data.pos.y,
+        fabsf(boss.data.rec.width) * boss.scale,
+        boss.data.rec.height * boss.scale
+    };
+    DrawTexturePro(tex, src, dst, {0, 0}, 0.0f, WHITE);
+
+    float barW = 200.0f, barH = 12.0f;
+    float barX = (windowWidth - barW) / 2.0f;
+    DrawRectangle(barX, 10, barW, barH, DARKGRAY);
+    DrawRectangle(barX, 10, barW * (boss.hp / boss.maxHp), barH, RED);
+    DrawText("BOSS", barX - 40, 10, 12, WHITE);
+    DrawText(TextFormat("introX: %.0f  recW: %.0f  scale: %.0f", 
+        boss.introTargetX, boss.data.rec.width, boss.scale), 10, 80, 14, YELLOW);
+}
+
+void UpdateBoss(Boss& boss, float dt) {
+    if (!boss.active) return;
+    
+    boss.data = updateAnimData(boss.data, dt, GetBossMaxFrame(boss.state));
+
+    // Slide in from right
+    if (boss.data.pos.x > boss.introTargetX) {
+        boss.data.pos.x -= 150.0f * dt;
+        if (boss.data.pos.x < boss.introTargetX) boss.data.pos.x = boss.introTargetX;
+        return;
+    }
+}
+
 void InitAsteroidSystem(Game& game) {
     AsteroidSystem& asteroid = game.asteroid;
     NebulaSystem& nebula = game.nebulae;
     const float baseGap = 500.0f; // Gap between nebula and asteroid
 
     asteroid.texture = LoadTexture("textures/Meteor_01.png");;
-    asteroid.count = 3;
+    asteroid.count = 1;
     asteroid.velocity = -200;
     for (int i = 0; i < asteroid.count; ++i) {
         float gap = baseGap + i * 450.0f;
@@ -585,6 +685,7 @@ Game InitGame()
 
 void StartGame(Game& game)
 {
+    game.reachedFinish = false;
     game.collision = false;
     game.scarfy = CreateScarfy(game);
     InitNebulaSystem(game);
@@ -649,6 +750,11 @@ float GetFinishLineX(const AsteroidSystem& asteroid)
     return last.data.pos.x + last.data.rec.width;
 }
 
+bool HasReachedFinish(const Game& game) {
+    const AsteroidData& last = game.asteroid.items[game.asteroid.count - 1];
+    return last.data.pos.x + last.data.rec.width < game.scarfy.data.pos.x;
+}
+
 void ResetToMenuGame(Game& game)
 {
     game.state = GameState::Menu;
@@ -672,16 +778,20 @@ void UpdateGame(Game& game, float dt)
 
         case GameState::Playing:
         {
-            bool reachedFinish = game.scarfy.data.pos.x >= GetFinishLineX(game.asteroid);
+            if (!game.reachedFinish && HasReachedFinish(game)) {
+                game.reachedFinish = true;
+            }
         
-            if (!reachedFinish) {
+            if (!game.reachedFinish) {
                 UpdateParallax(game.background, dt);
                 UpdateParallax(game.midGround, dt);
                 UpdateParallax(game.foreground, dt);
                 UpdateNebulaePos(game.nebulae, dt);
                 UpdateAsteroidPos(game.asteroid, dt);
             } else {
-                    game.scarfy.canMoveHorizontally = true;
+                game.scarfy.canMoveHorizontally = true;
+                if (!game.boss.active) InitBoss(game.boss, game.windowWidth, game.windowHeight);
+                UpdateBoss(game.boss, dt);
             }
             UpdateScarfy(game.scarfy, game.windowHeight, game.windowWidth, dt);
             UpdateNebulaAnimations(game.nebulae, dt);
@@ -741,6 +851,7 @@ void DrawGame(const Game& game)
             DrawNebulae(game);
             DrawAsteroid(game);
             DrawScarfy(game.scarfy);
+            DrawBoss(game.boss, game.windowWidth);
             DrawParticles(game.particles); 
             break;
 
