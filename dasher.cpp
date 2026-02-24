@@ -68,6 +68,8 @@ struct Scarfy
       // Boss fight movement
     bool canMoveHorizontally = false;
     float moveSpeed = 200.0f;
+
+    float facingDir = 1.0f;
 };
 
 enum class GameState
@@ -414,7 +416,7 @@ void DrawScarfy(const Scarfy& scarfy)
             float offset = i * 15.0f;
             float alpha = 255 * (1.0f - i / 4.0f);
             Color trailColor = { 135, 206, 235, (unsigned char)alpha };
-            Vector2 trailPos = { scarfy.data.pos.x - offset, scarfy.data.pos.y };
+            Vector2 trailPos = { scarfy.data.pos.x - (offset * scarfy.facingDir), scarfy.data.pos.y };
             DrawTextureRec(scarfy.texture, scarfy.data.rec, trailPos, trailColor);
         }
     }
@@ -470,7 +472,7 @@ void UpdateScarfy(Scarfy& scarfy, int windowHeight, int windowWidth, float dt)
    // Update dash
     if (scarfy.isDashing) {
         scarfy.dashTimer -= dt;
-        scarfy.data.pos.x += scarfy.dashSpeed * dt;
+        scarfy.data.pos.x += scarfy.dashSpeed * scarfy.facingDir * dt;
         
         if (scarfy.dashTimer <= 0.0f) {
             scarfy.isDashing = false;
@@ -522,14 +524,20 @@ void UpdateScarfy(Scarfy& scarfy, int windowHeight, int windowWidth, float dt)
     }
     else if (!scarfy.isInAir && scarfy.canMoveHorizontally && !isMovingHorizontally)
     {
-        // Idle during boss fight - don't animate, keep frame 0
+        // Idle during boss fight - keep frame 0
         scarfy.data.frame = 0;
         scarfy.data.rec.x = 0;
     }
-    else if (!scarfy.isInAir && isMovingHorizontally)
+    else if (!scarfy.isInAir && scarfy.canMoveHorizontally && isMovingHorizontally)
     {
         // Animate when moving during boss fight
         scarfy.data = updateAnimData(scarfy.data, dt, 5);
+        // Flip direction
+        bool goingLeft = IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT);
+        scarfy.data.rec.width = goingLeft 
+            ? -fabsf(scarfy.data.rec.width) 
+            :  fabsf(scarfy.data.rec.width);
+        scarfy.facingDir = goingLeft ? -1.0f : 1.0f;
     }
 }
 
