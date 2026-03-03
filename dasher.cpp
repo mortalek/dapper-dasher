@@ -247,7 +247,7 @@ void InitBoss(Boss& boss, int windowWidth, int windowHeight) {
     boss.data.frame = 0;
     boss.data.runningTime = 0.0f;
     boss.data.updateTime = 1.0f / 12.0f;
-    boss.introTargetX = (float)windowWidth - (boss.data.rec.width * boss.scale) + 20.0f;
+    boss.introTargetX = (float)windowWidth - (boss.data.rec.width * boss.scale) + 40.0f;
     
     boss.data.pos = {
         windowWidth + 20.0f,
@@ -299,8 +299,8 @@ void DrawBoss(const Boss& boss, int windowWidth) {
     DrawRectangle(barX, 10, barW, barH, DARKGRAY);
     DrawRectangle(barX, 10, barW * (boss.hp / boss.maxHp), barH, RED);
     DrawText("BOSS", barX - 40, 10, 12, WHITE);
-    DrawText(TextFormat("introX: %.0f  recW: %.0f  scale: %.0f", 
-        boss.introTargetX, boss.data.rec.width, boss.scale), 10, 80, 14, YELLOW);
+    // DrawText(TextFormat("introX: %.0f  recW: %.0f  scale: %.0f", 
+    //     boss.introTargetX, boss.data.rec.width, boss.scale), 10, 80, 14, YELLOW);
 }
 
 void UpdateBoss(Boss& boss, float dt) {
@@ -368,10 +368,18 @@ void DrawProjectiles(const Boss& boss) {
         Rectangle dst = {
             p.pos.x,
             p.pos.y,
-            p.data.rec.width * 4.0f,  // larger
-            p.data.rec.height * 4.0f
+            p.data.rec.width * 3.0f,  // larger
+            p.data.rec.height * 3.0f
         };
         DrawTexturePro(boss.texFireball, src, dst, {0, 0}, 0.0f, WHITE);
+// Debug collision rect
+        Rectangle projRec {
+            p.pos.x + p.data.rec.width,
+            p.pos.y + p.data.rec.height,
+            p.data.rec.width * 0.7f,
+            p.data.rec.height * 0.7f
+        };
+        DrawRectangleLines(projRec.x, projRec.y, projRec.width, projRec.height, RED);
     }
 }
 
@@ -445,6 +453,33 @@ void OnGameStateChanged(Game& game, GameState newState)
         case GameState::Playing:
             PlayMusicStream(game.gameMusic);
             break;
+    }
+}
+
+void CheckProjectileCollisions(Game& game) {
+    Rectangle scarfyRec {
+        game.scarfy.data.pos.x,
+        game.scarfy.data.pos.y,
+        fabsf(game.scarfy.data.rec.width),
+        game.scarfy.data.rec.height
+    };
+
+    for (int i = 0; i < maxProjectiles; ++i) {
+        Projectile& p = game.boss.projectiles[i];
+        if (!p.active) continue;
+
+        Rectangle projRec {
+            p.pos.x + p.data.rec.width,
+            p.pos.y + p.data.rec.height,
+            p.data.rec.width * 0.7f,
+            p.data.rec.height * 0.7f
+        };
+
+        if (CheckCollisionRecs(scarfyRec, projRec)) {
+            p.active = false;
+            OnGameStateChanged(game, GameState::GameOver);
+            return;
+        }
     }
 }
 
@@ -778,13 +813,30 @@ Game InitGame()
     return game;
 }
 
+void ResetProjectiles(Boss& boss) {
+    for (int i = 0; i < maxProjectiles; ++i)
+    {
+        boss.projectiles[i].active = false;
+    }
+}
+
+void ResetBoss(Boss& boss) {
+    boss.active = false;
+    boss.defeated = false;
+    boss.hp = boss.maxHp;
+}
+
 void StartGame(Game& game)
 {
     game.reachedFinish = false;
     game.collision = false;
+    
     game.scarfy = CreateScarfy(game);
     InitNebulaSystem(game);
     InitAsteroidSystem(game);
+
+    ResetBoss(game.boss);
+    ResetProjectiles(game.boss);
 }
 
 void UpdateParallax(ParallaxLayer& layer, float dt)
@@ -888,6 +940,7 @@ void UpdateGame(Game& game, float dt)
                 if (!game.boss.active) InitBoss(game.boss, game.windowWidth, game.windowHeight);
                 UpdateBoss(game.boss, dt);
                 UpdateProjectiles(game.boss, dt);
+                CheckProjectileCollisions(game);
             }
             UpdateScarfy(game.scarfy, game.windowHeight, game.windowWidth, dt);
             UpdateNebulaAnimations(game.nebulae, dt);
