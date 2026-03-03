@@ -4,6 +4,7 @@
 
 const int maxNebulae = 4;
 const int maxAsteroids = 3;
+const int maxProjectiles = 5;
 
 enum class BossState { Idle, Walking, Attacking, Hit, Dead };
 
@@ -30,12 +31,26 @@ struct AnimData
     float runningTime;
 };
 
+struct Projectile {
+    Vector2 pos;
+    Vector2 velocity;
+    AnimData data;
+    bool active = false;
+};
+struct ProjectileSystem {
+    Texture2D texture;
+    Projectile items[maxProjectiles];
+};
+
 struct Boss {
     Texture2D texAttack;
     Texture2D texDeath;
     Texture2D texGetHit;
     Texture2D texIdle;
     Texture2D texWalk;
+    Texture2D texFireball;
+    Projectile projectiles[maxProjectiles];
+
     AnimData data;
     BossState state = BossState::Idle;
     float scale = 3.0f;
@@ -48,6 +63,7 @@ struct Boss {
     float stateTimer = 0.0f;
     float moveSpeed = 80.0f;
     float introTargetX = 0.0f;
+
 };
 struct NebulaSystem
 {
@@ -217,7 +233,13 @@ int GetBossMaxFrame(BossState state) {
 }
 
 void InitBoss(Boss& boss, int windowWidth, int windowHeight) {
-    boss.texIdle = LoadTexture("textures/boss/Idle.png");
+    boss.texIdle   = LoadTexture("textures/boss/Idle.png");
+    boss.texAttack = LoadTexture("textures/boss/Attack.png");
+    boss.texDeath  = LoadTexture("textures/boss/Death.png");
+    boss.texGetHit = LoadTexture("textures/boss/Get_Hit.png");
+    boss.texWalk   = LoadTexture("textures/boss/Walk.png");
+    boss.texFireball = LoadTexture("textures/boss/Projectile_Move.png");
+
     boss.state = BossState::Idle;
     boss.active = true;
 
@@ -241,6 +263,20 @@ Texture2D GetBossTexture(const Boss& boss) {
         case BossState::Walking:   return boss.texWalk;
         default:                   return boss.texIdle;
     }
+}
+
+void SetBossState(Boss& boss, BossState newState) {
+    if (boss.state == newState) return;
+    boss.state = newState;
+    boss.data.frame = 0;
+    boss.data.runningTime = 0.0f;
+    boss.data.rec.x = 0.0f;
+
+    Texture2D tex = GetBossTexture(boss);
+    int frames = GetBossMaxFrame(newState) + 1;
+    boss.data.rec.width  = (float)tex.width / frames;
+    boss.data.rec.height = (float)tex.height;
+    boss.stateTimer = frames * boss.data.updateTime;
 }
 
 void DrawBoss(const Boss& boss, int windowWidth) {
@@ -277,6 +313,65 @@ void UpdateBoss(Boss& boss, float dt) {
         boss.data.pos.x -= 150.0f * dt;
         if (boss.data.pos.x < boss.introTargetX) boss.data.pos.x = boss.introTargetX;
         return;
+    }
+
+     // One-shot states
+    if (boss.state == BossState::Attacking) {
+        boss.stateTimer -= dt;
+        if (boss.stateTimer <= 0.0f) {
+            SetBossState(boss, BossState::Idle);
+            
+            // Spawn fireball after attack finishes
+            for (int i = 0; i < maxProjectiles; ++i) {
+                if (!boss.projectiles[i].active) {
+                    Projectile& p = boss.projectiles[i];
+                    p.active = true;
+                    p.pos = { boss.data.pos.x, boss.data.pos.y + boss.data.rec.height * boss.scale * 0.1f };
+                    p.velocity = { -150.0f, 0.0f };
+                    p.data.rec = { 0, 0, boss.texFireball.width / 6.0f, (float)boss.texFireball.height };
+                    p.data.frame = 0;
+                    p.data.runningTime = 0.0f;
+                    p.data.updateTime = 1.0f / 12.0f;
+                    break;
+                }
+            }
+            return;
+        }
+        return;
+    }   
+
+    // Attack cooldown
+    boss.attackTimer -= dt;
+    if (boss.attackTimer <= 0.0f) {
+        SetBossState(boss, BossState::Attacking);
+        boss.attackTimer = boss.attackCooldown;
+    }
+}
+
+void UpdateProjectiles(Boss& boss, float dt) {
+    for (int i = 0; i < maxProjectiles; ++i) {
+        Projectile& p = boss.projectiles[i];
+        if (!p.active) continue;
+        p.data = updateAnimData(p.data, dt, 5);
+        p.pos.x += p.velocity.x * dt;
+        if (p.pos.x < -100.0f) p.active = false;
+    }
+}
+
+void DrawProjectiles(const Boss& boss) {
+    for (int i = 0; i < maxProjectiles; ++i) {
+        const Projectile& p = boss.projectiles[i];
+        if (!p.active) continue;
+        Rectangle src = p.data.rec;
+        src.width = -src.width; // flip horizontally
+
+        Rectangle dst = {
+            p.pos.x,
+            p.pos.y,
+            p.data.rec.width * 4.0f,  // larger
+            p.data.rec.height * 4.0f
+        };
+        DrawTexturePro(boss.texFireball, src, dst, {0, 0}, 0.0f, WHITE);
     }
 }
 
@@ -792,6 +887,7 @@ void UpdateGame(Game& game, float dt)
                 game.scarfy.canMoveHorizontally = true;
                 if (!game.boss.active) InitBoss(game.boss, game.windowWidth, game.windowHeight);
                 UpdateBoss(game.boss, dt);
+                UpdateProjectiles(game.boss, dt);
             }
             UpdateScarfy(game.scarfy, game.windowHeight, game.windowWidth, dt);
             UpdateNebulaAnimations(game.nebulae, dt);
@@ -852,6 +948,7 @@ void DrawGame(const Game& game)
             DrawAsteroid(game);
             DrawScarfy(game.scarfy);
             DrawBoss(game.boss, game.windowWidth);
+            DrawProjectiles(game.boss);
             DrawParticles(game.particles); 
             break;
 
@@ -906,6 +1003,12 @@ int main()
     UnloadTexture(game.background.texture);
     UnloadTexture(game.midGround.texture);
     UnloadTexture(game.foreground.texture);
+    UnloadTexture(game.boss.texIdle);
+    UnloadTexture(game.boss.texAttack);
+    UnloadTexture(game.boss.texDeath);
+    UnloadTexture(game.boss.texGetHit);
+    UnloadTexture(game.boss.texWalk);
+    UnloadTexture(game.boss.texFireball);
 
     StopMusicStream(game.menuMusic);
     StopMusicStream(game.gameMusic);
