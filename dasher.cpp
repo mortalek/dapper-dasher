@@ -63,7 +63,7 @@ struct Boss {
     float stateTimer = 0.0f;
     float moveSpeed = 80.0f;
     float introTargetX = 0.0f;
-
+    float groundY = 0.0f;
 };
 struct NebulaSystem
 {
@@ -225,9 +225,9 @@ void UpdateNebulaAnimations(NebulaSystem& nebulae, float dt)
 int GetBossMaxFrame(BossState state) {
     switch (state) {
         case BossState::Attacking: return 15;
-        case BossState::Dead:      return 5;
+        case BossState::Dead:      return 7;
         case BossState::Hit:       return 2;
-        case BossState::Walking:   return 7;
+        case BossState::Walking:   return 8;
         default:                   return 8; // Idle: 9 frames
     }
 }
@@ -247,12 +247,15 @@ void InitBoss(Boss& boss, int windowWidth, int windowHeight) {
     boss.data.frame = 0;
     boss.data.runningTime = 0.0f;
     boss.data.updateTime = 1.0f / 12.0f;
-    boss.introTargetX = (float)windowWidth - (boss.data.rec.width * boss.scale) + 40.0f;
+    boss.introTargetX = (float)windowWidth - (boss.data.rec.width * boss.scale) + 60.0f;
     
     boss.data.pos = {
         windowWidth + 20.0f,
         windowHeight - boss.data.rec.height * boss.scale + (boss.data.rec.height * boss.scale * 0.3f)
     };
+
+    boss.groundY = windowHeight - boss.data.rec.height * boss.scale + (boss.data.rec.height * boss.scale * 0.3f);
+    boss.data.pos.y = boss.groundY;
 }
 
 Texture2D GetBossTexture(const Boss& boss) {
@@ -276,6 +279,11 @@ void SetBossState(Boss& boss, BossState newState) {
     int frames = GetBossMaxFrame(newState) + 1;
     boss.data.rec.width  = (float)tex.width / frames;
     boss.data.rec.height = (float)tex.height;
+    boss.data.pos.y = boss.groundY;
+    boss.stateTimer = frames * boss.data.updateTime;
+
+    // Recalculate groundY for this texture's height
+    boss.data.pos.y = boss.groundY - (boss.data.rec.height - boss.texIdle.height) * boss.scale;
     boss.stateTimer = frames * boss.data.updateTime;
 }
 
@@ -294,6 +302,8 @@ void DrawBoss(const Boss& boss, int windowWidth) {
     };
     DrawTexturePro(tex, src, dst, {0, 0}, 0.0f, WHITE);
 
+DrawText(TextFormat("walk id:%d w:%d h:%d", 
+    boss.texWalk.id, boss.texWalk.width, boss.texWalk.height), 10, 75, 12, YELLOW);
     float barW = 200.0f, barH = 12.0f;
     float barX = (windowWidth - barW) / 2.0f;
     DrawRectangle(barX, 10, barW, barH, DARKGRAY);
@@ -304,41 +314,55 @@ void DrawBoss(const Boss& boss, int windowWidth) {
 }
 
 void UpdateBoss(Boss& boss, float dt) {
-    if (!boss.active) return;
-    
-    boss.data = updateAnimData(boss.data, dt, GetBossMaxFrame(boss.state));
+    if (!boss.active || boss.defeated) return;
 
+    if (boss.state != BossState::Dead) {
+        boss.data = updateAnimData(boss.data, dt, GetBossMaxFrame(boss.state));
+    }
     // Slide in from right
     if (boss.data.pos.x > boss.introTargetX) {
         boss.data.pos.x -= 150.0f * dt;
         if (boss.data.pos.x < boss.introTargetX) boss.data.pos.x = boss.introTargetX;
+        if (boss.state != BossState::Walking) SetBossState(boss, BossState::Walking);
         return;
     }
 
-     // One-shot states
-    if (boss.state == BossState::Attacking) {
+    // Deadddd — clamp to last frame, wait for timer
+    if (boss.state == BossState::Dead) {
         boss.stateTimer -= dt;
-        if (boss.stateTimer <= 0.0f) {
-            SetBossState(boss, BossState::Idle);
-            
-            // Spawn fireball after attack finishes
-            for (int i = 0; i < maxProjectiles; ++i) {
-                if (!boss.projectiles[i].active) {
-                    Projectile& p = boss.projectiles[i];
-                    p.active = true;
-                    p.pos = { boss.data.pos.x, boss.data.pos.y + boss.data.rec.height * boss.scale * 0.1f };
-                    p.velocity = { -150.0f, 0.0f };
-                    p.data.rec = { 0, 0, boss.texFireball.width / 6.0f, (float)boss.texFireball.height };
-                    p.data.frame = 0;
-                    p.data.runningTime = 0.0f;
-                    p.data.updateTime = 1.0f / 12.0f;
-                    break;
-                }
-            }
-            return;
+        if (boss.stateTimer <= 0.0f) { boss.defeated = true; return; }
+        if (boss.data.frame >= GetBossMaxFrame(BossState::Dead)) {
+            boss.data.frame = GetBossMaxFrame(BossState::Dead);
+            boss.data.rec.x = boss.data.frame * boss.data.rec.width;
+        } else {
+            boss.data = updateAnimData(boss.data, dt, GetBossMaxFrame(BossState::Dead));
         }
         return;
-    }   
+    }
+
+    // One-shot: Attacking and Hit
+    if (boss.state == BossState::Attacking || boss.state == BossState::Hit) {
+        boss.stateTimer -= dt;
+        if (boss.stateTimer <= 0.0f) {
+            if (boss.state == BossState::Attacking) {
+                for (int i = 0; i < maxProjectiles; ++i) {
+                    if (!boss.projectiles[i].active) {
+                        Projectile& p = boss.projectiles[i];
+                        p.active = true;
+                        p.pos = { boss.data.pos.x, boss.data.pos.y + boss.data.rec.height * boss.scale * 0.1f };
+                        p.velocity = { -150.0f, 0.0f };
+                        p.data.rec = { 0, 0, boss.texFireball.width / 6.0f, (float)boss.texFireball.height };
+                        p.data.frame = 0;
+                        p.data.runningTime = 0.0f;
+                        p.data.updateTime = 1.0f / 12.0f;
+                        break;
+                    }
+                }
+            }
+            SetBossState(boss, BossState::Idle);
+        }
+        return;
+    }
 
     // Attack cooldown
     boss.attackTimer -= dt;
@@ -372,14 +396,14 @@ void DrawProjectiles(const Boss& boss) {
             p.data.rec.height * 3.0f
         };
         DrawTexturePro(boss.texFireball, src, dst, {0, 0}, 0.0f, WHITE);
-// Debug collision rect
-        Rectangle projRec {
-            p.pos.x + p.data.rec.width,
-            p.pos.y + p.data.rec.height,
-            p.data.rec.width * 0.7f,
-            p.data.rec.height * 0.7f
-        };
-        DrawRectangleLines(projRec.x, projRec.y, projRec.width, projRec.height, RED);
+// // Debug collision rect
+//         Rectangle projRec {
+//             p.pos.x + p.data.rec.width,
+//             p.pos.y + p.data.rec.height,
+//             p.data.rec.width * 0.7f,
+//             p.data.rec.height * 0.7f
+//         };
+//         DrawRectangleLines(projRec.x, projRec.y, projRec.width, projRec.height, RED);
     }
 }
 
@@ -607,6 +631,42 @@ void CheckAsteroidCollisions(Game& game)
                 OnGameStateChanged(game, GameState::GameOver);
                 return;
             }
+        }
+    }
+}
+
+void CheckBossCollision(Game& game) {
+    if (!game.boss.active || game.boss.defeated) return;
+    if (!game.scarfy.isDashing) return;
+
+    Rectangle bossRec {
+        game.boss.data.pos.x + 10,
+        game.boss.data.pos.y + 10,
+        fabsf(game.boss.data.rec.width) * game.boss.scale - 20,
+        game.boss.data.rec.height * game.boss.scale - 20
+    };
+
+    Rectangle scarfyRec {
+        game.scarfy.data.pos.x,
+        game.scarfy.data.pos.y,
+        fabsf(game.scarfy.data.rec.width),
+        game.scarfy.data.rec.height
+    };
+
+    if (CheckCollisionRecs(bossRec, scarfyRec)) {
+        game.boss.hp -= 25.0f;
+        game.scarfy.isDashing = false;
+        game.scarfy.data.pos.x -= 60.0f * game.scarfy.facingDir;
+
+        SpawnParticles(game.particles, {
+            game.boss.data.pos.x + fabsf(game.boss.data.rec.width) * game.boss.scale * 0.5f,
+            game.boss.data.pos.y + game.boss.data.rec.height * game.boss.scale * 0.5f
+        }, 20);
+
+        if (game.boss.hp <= 0.0f) {
+            SetBossState(game.boss, BossState::Dead);
+        } else {
+            SetBossState(game.boss, BossState::Hit);
         }
     }
 }
@@ -941,6 +1001,7 @@ void UpdateGame(Game& game, float dt)
                 UpdateBoss(game.boss, dt);
                 UpdateProjectiles(game.boss, dt);
                 CheckProjectileCollisions(game);
+                CheckBossCollision(game);
             }
             UpdateScarfy(game.scarfy, game.windowHeight, game.windowWidth, dt);
             UpdateNebulaAnimations(game.nebulae, dt);
